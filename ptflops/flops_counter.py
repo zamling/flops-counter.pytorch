@@ -12,7 +12,113 @@ from functools import partial
 import numpy as np
 import torch
 import torch.nn as nn
+class ModelFormat(object):
+    def __init__(self, model):
+        self.model = model
 
+    def get_total_flops(self, ignore_batch = True, is_string = True, unit ='GMac' ):
+        '''
+        param:
+        ignore_batch: ignore_batch = True, the flops is divided by batch size, otherwise consider the batch size.
+        is_string: is_string=False, return a int value
+        '''
+        flops_sum = 0
+        if ignore_batch:
+            batches_count = self.model.__batch_counter__
+        else:
+            batches_count = 1
+        for module in self.model.modules():
+            if is_supported_instance(module):
+                flops_sum += module.__flops__
+        if is_string:
+            return flops_to_string(flops_sum/batches_count,units=unit)
+        else:
+            return flops_sum/batches_count
+
+    def get_total_param(self,is_string = True, unit =None):
+        params = get_model_parameters_number(self.model)
+        if is_string:
+            return params_to_string(params,units=unit)
+        else:
+            return params
+
+    def get_layer_flops(self,name,ignore_batch = True, is_string = True, unit ='GMac'):
+        '''
+        it is recommended that add the name when using nn.Sequential
+        '''
+        if ignore_batch:
+            batches_count = self.model.__batch_counter__
+        else:
+            batches_count = 1
+        def accumulate_flops(model):
+            if is_supported_instance(model):
+                return model.__flops__ / batches_count
+            else:
+                sum = 0
+                for m in model.children():
+                    sum += accumulate_flops(m)
+                return sum
+        for name_, module in self.model.named_modules():
+            if name_ == name:
+                if is_string:
+                    return flops_to_string(accumulate_flops(module) / batches_count, units=unit)
+                else:
+                    return accumulate_flops(module)
+        print("Can not find this layer, please check the layer's name")
+        return None
+
+    def get_layer_params(self,name,is_string = True,unit =None):
+        def accumulate_params(model):
+            if is_supported_instance(model):
+                return model.__params__
+            else:
+                sum = 0
+                for m in model.children():
+                    sum += accumulate_params(m)
+                    # recursive
+                return sum
+        for name_, module in self.model.named_modules():
+            if name_ == name:
+                params = accumulate_params(module)
+                if is_string:
+                    return params_to_string(params,units=unit)
+                else:
+                    return params
+    def output_info_to_file(self,file_path):
+        total_flops = self.get_total_flops(is_string=False)
+        total_params = self.get_total_param(is_string=False)
+        with open(file_path,'w+') as f:
+            print_model_with_flops(model=self.model,total_flops=total_flops,total_params=total_params,ost=f)
+
+
+def get_model_info(model, input_res,
+                              input_constructor=None, ost=sys.stdout,
+                              verbose=False, ignore_modules=[],
+                              custom_modules_hooks={}):
+
+
+    assert type(input_res) is tuple
+    assert len(input_res) >= 1
+    assert isinstance(model, nn.Module)
+    global CUSTOM_MODULES_MAPPING
+    CUSTOM_MODULES_MAPPING = custom_modules_hooks
+    flops_model = add_flops_counting_methods(model)
+    flops_model.eval()
+    flops_model.start_flops_count(ost=ost, verbose=verbose,
+                                  ignore_list=ignore_modules)
+    if input_constructor:
+        input = input_constructor(input_res)
+        _ = flops_model(**input)
+    else:
+        try:
+            batch = torch.ones(()).new_empty((1, *input_res),
+                                             dtype=next(flops_model.parameters()).dtype,
+                                             device=next(flops_model.parameters()).device)
+        except StopIteration:
+            batch = torch.ones(()).new_empty((1, *input_res))
+
+        _ = flops_model(batch)
+    return ModelFormat(flops_model)
 
 def get_model_complexity_info(model, input_res,
                               print_per_layer_stat=True,
@@ -20,6 +126,7 @@ def get_model_complexity_info(model, input_res,
                               input_constructor=None, ost=sys.stdout,
                               verbose=False, ignore_modules=[],
                               custom_modules_hooks={}):
+
     assert type(input_res) is tuple
     assert len(input_res) >= 1
     assert isinstance(model, nn.Module)
@@ -102,6 +209,7 @@ def print_model_with_flops(model, total_flops, total_params, units='GMac',
             sum = 0
             for m in self.children():
                 sum += m.accumulate_params()
+                #recursive
             return sum
 
     def accumulate_flops(self):

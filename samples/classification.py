@@ -4,7 +4,7 @@ import sys
 import torch
 import torchvision.models as models
 
-from ptflops import get_model_complexity_info
+from ptflops import get_model_complexity_info, get_model_info
 
 pt_models = {'resnet18': models.resnet18,
              'resnet50': models.resnet50,
@@ -33,9 +33,10 @@ if __name__ == '__main__':
     if torch.cuda.is_available():
         net.cuda(device=args.device)
 
-    macs, params = get_model_complexity_info(net, (3, 224, 224),
-                                             as_strings=True,
-                                             print_per_layer_stat=True,
-                                             ost=ost)
-    print('{:<30}  {:<8}'.format('Computational complexity: ', macs))
-    print('{:<30}  {:<8}'.format('Number of parameters: ', params))
+    # macs, params = get_model_complexity_info(net, (3, 224, 224),
+    #                                          as_strings=True,
+    #                                          print_per_layer_stat=True,
+    #                                          ost=ost)
+    # print('{:<30}  {:<8}'.format('Computational complexity: ', macs))
+    # print('{:<30}  {:<8}'.format('Number of parameters: ', params))
+    flops_model = get_model_info(net, (3, 224, 224),ost=ost)
